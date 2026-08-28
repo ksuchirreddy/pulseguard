@@ -7,7 +7,8 @@ let dbInstance: DatabaseSync | null = null;
 
 export function getDb(): DatabaseSync {
   if (!dbInstance) {
-    const dbPath = path.join(process.cwd(), "data.db");
+    const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NODE_ENV === "production" && !fs.existsSync(process.cwd() + "/package.json"));
+    const dbPath = isServerless ? path.join("/tmp", "data.db") : path.join(process.cwd(), "data.db");
     dbInstance = new DatabaseSync(dbPath);
     initSchema(dbInstance);
   }

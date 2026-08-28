@@ -2,12 +2,13 @@ import { NextResponse } from "next/server";
 import { getAllMonitors } from "@/lib/db";
 import { pingMonitor } from "@/lib/monitorEngine";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const monitors = getAllMonitors();
     const activeMonitors = monitors.filter((m) => m.status !== "PAUSED");
 
-    // Ping all active monitors concurrently
     const results = await Promise.allSettled(activeMonitors.map((m) => pingMonitor(m)));
 
     const summary = {

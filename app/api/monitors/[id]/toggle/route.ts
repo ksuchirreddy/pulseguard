@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { toggleMonitorStatus } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;

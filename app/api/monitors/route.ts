@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getAllMonitors, createMonitor } from "@/lib/db";
 import { pingMonitor } from "@/lib/monitorEngine";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const monitors = getAllMonitors();
@@ -18,7 +20,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Name and URL are required" }, { status: 400 });
     }
 
-    // Basic URL validation
     try {
       new URL(body.url);
     } catch {
@@ -37,7 +38,6 @@ export async function POST(req: Request) {
       alertEmail: body.alertEmail || undefined,
     });
 
-    // Run initial ping
     await pingMonitor(monitor);
 
     return NextResponse.json({ monitor }, { status: 201 });
