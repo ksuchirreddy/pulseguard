@@ -1,80 +1,57 @@
-import { DatabaseSync } from "node:sqlite";
-import path from "node:path";
 import fs from "node:fs";
+import path from "node:path";
 import { Monitor, Heartbeat, Incident, GlobalStats, MonitorStatus } from "./types";
 
-let dbInstance: DatabaseSync | null = null;
-
-export function getDb(): DatabaseSync {
-  if (!dbInstance) {
-    const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NODE_ENV === "production" && !fs.existsSync(process.cwd() + "/package.json"));
-    const dbPath = isServerless ? path.join("/tmp", "data.db") : path.join(process.cwd(), "data.db");
-    dbInstance = new DatabaseSync(dbPath);
-    initSchema(dbInstance);
-  }
-  return dbInstance;
+interface DbSchema {
+  monitors: Monitor[];
+  heartbeats: Heartbeat[];
+  incidents: Incident[];
 }
 
-function initSchema(db: DatabaseSync) {
-  // Create tables
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS monitors (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      url TEXT NOT NULL,
-      method TEXT NOT NULL DEFAULT 'GET',
-      interval INTEGER NOT NULL DEFAULT 60,
-      timeout INTEGER NOT NULL DEFAULT 5000,
-      expected_status INTEGER NOT NULL DEFAULT 200,
-      headers TEXT,
-      body TEXT,
-      status TEXT NOT NULL DEFAULT 'UP',
-      last_checked TEXT,
-      last_latency INTEGER,
-      alert_email TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
+let inMemoryDb: DbSchema | null = null;
 
-    CREATE TABLE IF NOT EXISTS heartbeats (
-      id TEXT PRIMARY KEY,
-      monitor_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      response_time INTEGER NOT NULL,
-      status_code INTEGER,
-      error TEXT,
-      timestamp TEXT NOT NULL,
-      FOREIGN KEY (monitor_id) REFERENCES monitors (id) ON DELETE CASCADE
-    );
+function getDbFilePath(): string {
+  const isServerless = Boolean(
+    process.env.VERCEL ||
+    process.env.AWS_LAMBDA_FUNCTION_NAME ||
+    (process.env.NODE_ENV === "production" && !fs.existsSync(path.join(process.cwd(), "package.json")))
+  );
+  return isServerless ? path.join("/tmp", "pulseguard_data.json") : path.join(process.cwd(), "data.json");
+}
 
-    CREATE INDEX IF NOT EXISTS idx_heartbeats_monitor_time ON heartbeats(monitor_id, timestamp);
+function loadDb(): DbSchema {
+  if (inMemoryDb) return inMemoryDb;
 
-    CREATE TABLE IF NOT EXISTS incidents (
-      id TEXT PRIMARY KEY,
-      monitor_id TEXT NOT NULL,
-      title TEXT NOT NULL,
-      error_details TEXT,
-      started_at TEXT NOT NULL,
-      resolved_at TEXT,
-      status TEXT NOT NULL DEFAULT 'OPEN',
-      FOREIGN KEY (monitor_id) REFERENCES monitors (id) ON DELETE CASCADE
-    );
+  const filePath = getDbFilePath();
+  try {
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, "utf-8");
+      inMemoryDb = JSON.parse(content);
+      return inMemoryDb!;
+    }
+  } catch (err) {
+    console.warn("Failed to read database file, initializing fresh store:", err);
+  }
 
-    CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
-  `);
+  // Initialize fresh seeded store
+  inMemoryDb = seedInitialStore();
+  saveDb(inMemoryDb);
+  return inMemoryDb;
+}
 
-  // Seed sample monitors if empty
-  const countStmt = db.prepare("SELECT COUNT(*) as count FROM monitors");
-  const result = countStmt.get() as { count: number };
-
-  if (result.count === 0) {
-    seedInitialData(db);
+function saveDb(db: DbSchema) {
+  inMemoryDb = db;
+  const filePath = getDbFilePath();
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(db, null, 2), "utf-8");
+  } catch (err) {
+    // Non-fatal if filesystem is read-only
   }
 }
 
-function seedInitialData(db: DatabaseSync) {
+function seedInitialStore(): DbSchema {
   const now = new Date();
-  const sampleMonitors = [
+  const monitors: Monitor[] = [
     {
       id: "mon-1",
       name: "GitHub API Gateway",
@@ -82,13 +59,13 @@ function seedInitialData(db: DatabaseSync) {
       method: "GET",
       interval: 60,
       timeout: 5000,
-      expected_status: 200,
+      expectedStatus: 200,
       status: "UP",
-      last_checked: now.toISOString(),
-      last_latency: 142,
-      alert_email: "devops@example.com",
-      created_at: new Date(Date.now() - 86400000 * 7).toISOString(),
-      updated_at: now.toISOString(),
+      lastChecked: now.toISOString(),
+      lastLatency: 142,
+      alertEmail: "devops@example.com",
+      createdAt: new Date(Date.now() - 86400000 * 7).toISOString(),
+      updatedAt: now.toISOString(),
     },
     {
       id: "mon-2",
@@ -97,13 +74,13 @@ function seedInitialData(db: DatabaseSync) {
       method: "GET",
       interval: 60,
       timeout: 3000,
-      expected_status: 200,
+      expectedStatus: 200,
       status: "UP",
-      last_checked: now.toISOString(),
-      last_latency: 28,
-      alert_email: "infra@example.com",
-      created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
-      updated_at: now.toISOString(),
+      lastChecked: now.toISOString(),
+      lastLatency: 28,
+      alertEmail: "infra@example.com",
+      createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
+      updatedAt: now.toISOString(),
     },
     {
       id: "mon-3",
@@ -112,13 +89,13 @@ function seedInitialData(db: DatabaseSync) {
       method: "GET",
       interval: 120,
       timeout: 5000,
-      expected_status: 200,
+      expectedStatus: 200,
       status: "UP",
-      last_checked: now.toISOString(),
-      last_latency: 185,
-      alert_email: "status@company.io",
-      created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-      updated_at: now.toISOString(),
+      lastChecked: now.toISOString(),
+      lastLatency: 185,
+      alertEmail: "status@company.io",
+      createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
+      updatedAt: now.toISOString(),
     },
     {
       id: "mon-4",
@@ -127,144 +104,126 @@ function seedInitialData(db: DatabaseSync) {
       method: "GET",
       interval: 60,
       timeout: 4000,
-      expected_status: 200,
+      expectedStatus: 200,
       status: "UP",
-      last_checked: now.toISOString(),
-      last_latency: 320,
-      alert_email: "alerts@example.com",
-      created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-      updated_at: now.toISOString(),
+      lastChecked: now.toISOString(),
+      lastLatency: 320,
+      alertEmail: "alerts@example.com",
+      createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+      updatedAt: now.toISOString(),
     },
   ];
 
-  const insertMon = db.prepare(`
-    INSERT INTO monitors (id, name, url, method, interval, timeout, expected_status, status, last_checked, last_latency, alert_email, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const insertHeartbeat = db.prepare(`
-    INSERT INTO heartbeats (id, monitor_id, status, response_time, status_code, timestamp)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-
-  for (const m of sampleMonitors) {
-    insertMon.run(
-      m.id,
-      m.name,
-      m.url,
-      m.method,
-      m.interval,
-      m.timeout,
-      m.expected_status,
-      m.status,
-      m.last_checked,
-      m.last_latency,
-      m.alert_email,
-      m.created_at,
-      m.updated_at
-    );
-
-    // Generate 30 heartbeats across the last 24h
+  const heartbeats: Heartbeat[] = [];
+  for (const m of monitors) {
     for (let i = 29; i >= 0; i--) {
       const hbTime = new Date(Date.now() - i * 48 * 60 * 1000).toISOString();
       const latencyVariance = Math.floor(Math.random() * 40) - 20;
-      const latency = Math.max(15, m.last_latency + latencyVariance);
-      insertHeartbeat.run(
-        `hb-${m.id}-${i}`,
-        m.id,
-        "UP",
-        latency,
-        200,
-        hbTime
-      );
+      const latency = Math.max(15, (m.lastLatency || 100) + latencyVariance);
+      heartbeats.push({
+        id: `hb-${m.id}-${i}`,
+        monitorId: m.id,
+        status: "UP",
+        responseTime: latency,
+        statusCode: 200,
+        timestamp: hbTime,
+      });
     }
   }
+
+  return {
+    monitors,
+    heartbeats,
+    incidents: [],
+  };
 }
 
-// Database Operations
+// Database Public Operations
 export function getAllMonitors(): Monitor[] {
-  const db = getDb();
-  const rows = db.prepare(`SELECT * FROM monitors ORDER BY created_at DESC`).all() as any[];
-  return rows.map(mapRowToMonitor);
+  const db = loadDb();
+  return db.monitors.map((m) => ({
+    ...m,
+    uptime24h: calculateUptimePercentage(m.id, 24),
+    uptime30d: calculateUptimePercentage(m.id, 720),
+  }));
 }
 
 export function getMonitorById(id: string): Monitor | null {
-  const db = getDb();
-  const row = db.prepare(`SELECT * FROM monitors WHERE id = ?`).get(id) as any;
-  if (!row) return null;
-  return mapRowToMonitor(row);
+  const db = loadDb();
+  const m = db.monitors.find((item) => item.id === id);
+  if (!m) return null;
+  return {
+    ...m,
+    uptime24h: calculateUptimePercentage(m.id, 24),
+    uptime30d: calculateUptimePercentage(m.id, 720),
+  };
 }
 
 export function createMonitor(data: Omit<Monitor, "id" | "status" | "createdAt" | "updatedAt">): Monitor {
-  const db = getDb();
+  const db = loadDb();
   const id = "mon-" + Math.random().toString(36).substring(2, 9);
   const now = new Date().toISOString();
-  
-  db.prepare(`
-    INSERT INTO monitors (id, name, url, method, interval, timeout, expected_status, headers, body, status, alert_email, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'UP', ?, ?, ?)
-  `).run(
-    id,
-    data.name,
-    data.url,
-    data.method || "GET",
-    data.interval || 60,
-    data.timeout || 5000,
-    data.expectedStatus || 200,
-    data.headers || null,
-    data.body || null,
-    data.alertEmail || null,
-    now,
-    now
-  );
 
-  return getMonitorById(id)!;
+  const newMonitor: Monitor = {
+    id,
+    name: data.name,
+    url: data.url,
+    method: data.method || "GET",
+    interval: data.interval || 60,
+    timeout: data.timeout || 5000,
+    expectedStatus: data.expectedStatus || 200,
+    headers: data.headers,
+    body: data.body,
+    status: "UP",
+    alertEmail: data.alertEmail,
+    createdAt: now,
+    updatedAt: now,
+    uptime24h: 100,
+    uptime30d: 100,
+  };
+
+  db.monitors.unshift(newMonitor);
+  saveDb(db);
+  return newMonitor;
 }
 
 export function updateMonitor(id: string, data: Partial<Monitor>): Monitor | null {
-  const db = getDb();
-  const current = getMonitorById(id);
-  if (!current) return null;
+  const db = loadDb();
+  const index = db.monitors.findIndex((m) => m.id === id);
+  if (index === -1) return null;
 
+  const current = db.monitors[index];
   const now = new Date().toISOString();
-  db.prepare(`
-    UPDATE monitors
-    SET name = ?, url = ?, method = ?, interval = ?, timeout = ?, expected_status = ?, headers = ?, body = ?, alert_email = ?, updated_at = ?
-    WHERE id = ?
-  `).run(
-    data.name ?? current.name,
-    data.url ?? current.url,
-    data.method ?? current.method,
-    data.interval ?? current.interval,
-    data.timeout ?? current.timeout,
-    data.expectedStatus ?? current.expectedStatus,
-    data.headers ?? current.headers ?? null,
-    data.body ?? current.body ?? null,
-    data.alertEmail ?? current.alertEmail ?? null,
-    now,
-    id
-  );
 
+  const updated: Monitor = {
+    ...current,
+    ...data,
+    updatedAt: now,
+  };
+
+  db.monitors[index] = updated;
+  saveDb(db);
   return getMonitorById(id);
 }
 
 export function deleteMonitor(id: string): boolean {
-  const db = getDb();
-  db.prepare(`DELETE FROM heartbeats WHERE monitor_id = ?`).run(id);
-  db.prepare(`DELETE FROM incidents WHERE monitor_id = ?`).run(id);
-  const result = db.prepare(`DELETE FROM monitors WHERE id = ?`).run(id);
-  return result.changes > 0;
+  const db = loadDb();
+  const initialLen = db.monitors.length;
+  db.monitors = db.monitors.filter((m) => m.id !== id);
+  db.heartbeats = db.heartbeats.filter((hb) => hb.monitorId !== id);
+  db.incidents = db.incidents.filter((inc) => inc.monitorId !== id);
+  saveDb(db);
+  return db.monitors.length < initialLen;
 }
 
 export function toggleMonitorStatus(id: string): Monitor | null {
-  const db = getDb();
-  const current = getMonitorById(id);
-  if (!current) return null;
+  const db = loadDb();
+  const monitor = db.monitors.find((m) => m.id === id);
+  if (!monitor) return null;
 
-  const newStatus: MonitorStatus = current.status === "PAUSED" ? "UP" : "PAUSED";
-  const now = new Date().toISOString();
-
-  db.prepare(`UPDATE monitors SET status = ?, updated_at = ? WHERE id = ?`).run(newStatus, now, id);
+  monitor.status = monitor.status === "PAUSED" ? "UP" : "PAUSED";
+  monitor.updatedAt = new Date().toISOString();
+  saveDb(db);
   return getMonitorById(id);
 }
 
@@ -275,111 +234,101 @@ export function recordProbeResult(
   statusCode?: number,
   error?: string
 ) {
-  const db = getDb();
+  const db = loadDb();
   const now = new Date().toISOString();
   const hbId = "hb-" + Math.random().toString(36).substring(2, 10);
 
-  // Record Heartbeat
-  db.prepare(`
-    INSERT INTO heartbeats (id, monitor_id, status, response_time, status_code, error, timestamp)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(hbId, monitorId, status, responseTime, statusCode ?? null, error ?? null, now);
+  // 1. Add heartbeat
+  db.heartbeats.push({
+    id: hbId,
+    monitorId,
+    status,
+    responseTime,
+    statusCode,
+    error,
+    timestamp: now,
+  });
 
-  // Update Monitor status & latency
-  db.prepare(`
-    UPDATE monitors
-    SET status = ?, last_checked = ?, last_latency = ?, updated_at = ?
-    WHERE id = ?
-  `).run(status, now, responseTime, now, monitorId);
+  // Limit heartbeats store size to prevent memory growth
+  if (db.heartbeats.length > 2000) {
+    db.heartbeats = db.heartbeats.slice(-1000);
+  }
 
-  // Handle Incidents
+  // 2. Update monitor
+  const monitor = db.monitors.find((m) => m.id === monitorId);
+  if (monitor) {
+    monitor.status = status;
+    monitor.lastChecked = now;
+    monitor.lastLatency = responseTime;
+    monitor.updatedAt = now;
+  }
+
+  // 3. Handle incidents
   if (status === "DOWN") {
-    // Check if open incident exists
-    const openInc = db.prepare(`
-      SELECT * FROM incidents WHERE monitor_id = ? AND status = 'OPEN'
-    `).get(monitorId) as any;
-
-    if (!openInc) {
-      const incId = "inc-" + Math.random().toString(36).substring(2, 9);
-      const title = `Outage detected on ${statusCode ? `HTTP ${statusCode}` : (error || "Connection Timeout")}`;
-      db.prepare(`
-        INSERT INTO incidents (id, monitor_id, title, error_details, started_at, status)
-        VALUES (?, ?, ?, ?, ?, 'OPEN')
-      `).run(incId, monitorId, title, error || `Received status ${statusCode}`, now);
+    const hasOpen = db.incidents.some((inc) => inc.monitorId === monitorId && inc.status === "OPEN");
+    if (!hasOpen) {
+      db.incidents.unshift({
+        id: "inc-" + Math.random().toString(36).substring(2, 9),
+        monitorId,
+        title: `Outage detected on ${statusCode ? `HTTP ${statusCode}` : (error || "Timeout")}`,
+        errorDetails: error || `Received unexpected status code ${statusCode}`,
+        startedAt: now,
+        status: "OPEN",
+      });
     }
   } else if (status === "UP") {
-    // Auto-resolve any open incident
-    db.prepare(`
-      UPDATE incidents
-      SET status = 'RESOLVED', resolved_at = ?
-      WHERE monitor_id = ? AND status = 'OPEN'
-    `).run(now, monitorId);
+    for (const inc of db.incidents) {
+      if (inc.monitorId === monitorId && inc.status === "OPEN") {
+        inc.status = "RESOLVED";
+        inc.resolvedAt = now;
+      }
+    }
   }
+
+  saveDb(db);
 }
 
 export function getHeartbeatsForMonitor(monitorId: string, limit = 50): Heartbeat[] {
-  const db = getDb();
-  const rows = db.prepare(`
-    SELECT * FROM heartbeats WHERE monitor_id = ? ORDER BY timestamp DESC LIMIT ?
-  `).all(monitorId, limit) as any[];
-
-  return rows.reverse().map((r) => ({
-    id: r.id,
-    monitorId: r.monitor_id,
-    status: r.status,
-    responseTime: r.response_time,
-    statusCode: r.status_code,
-    error: r.error,
-    timestamp: r.timestamp,
-  }));
+  const db = loadDb();
+  return db.heartbeats
+    .filter((hb) => hb.monitorId === monitorId)
+    .slice(-limit);
 }
 
 export function getIncidents(status?: "OPEN" | "RESOLVED", limit = 20): Incident[] {
-  const db = getDb();
-  let query = `
-    SELECT i.*, m.name as monitor_name, m.url as monitor_url
-    FROM incidents i
-    JOIN monitors m ON i.monitor_id = m.id
-  `;
-  if (status) {
-    query += ` WHERE i.status = '${status}'`;
-  }
-  query += ` ORDER BY i.started_at DESC LIMIT ${limit}`;
+  const db = loadDb();
+  let list = db.incidents.map((inc) => {
+    const m = db.monitors.find((mon) => mon.id === inc.monitorId);
+    return {
+      ...inc,
+      monitorName: m?.name || "Unknown Service",
+      monitorUrl: m?.url || "",
+    };
+  });
 
-  const rows = db.prepare(query).all() as any[];
-  return rows.map((r) => ({
-    id: r.id,
-    monitorId: r.monitor_id,
-    monitorName: r.monitor_name,
-    monitorUrl: r.monitor_url,
-    title: r.title,
-    errorDetails: r.error_details,
-    startedAt: r.started_at,
-    resolvedAt: r.resolved_at,
-    status: r.status,
-  }));
+  if (status) {
+    list = list.filter((inc) => inc.status === status);
+  }
+
+  return list.slice(0, limit);
 }
 
 export function calculateUptimePercentage(monitorId: string, hours = 24): number {
-  const db = getDb();
-  const since = new Date(Date.now() - hours * 3600 * 1000).toISOString();
-  
-  const stats = db.prepare(`
-    SELECT 
-      COUNT(*) as total,
-      SUM(CASE WHEN status = 'UP' THEN 1 ELSE 0 END) as up_count
-    FROM heartbeats
-    WHERE monitor_id = ? AND timestamp >= ?
-  `).get(monitorId, since) as { total: number; up_count: number | null };
+  const db = loadDb();
+  const since = Date.now() - hours * 3600 * 1000;
+  const filtered = db.heartbeats.filter(
+    (hb) => hb.monitorId === monitorId && new Date(hb.timestamp).getTime() >= since
+  );
 
-  if (!stats || stats.total === 0) return 100;
-  return Number((( (stats.up_count || 0) / stats.total) * 100).toFixed(2));
+  if (filtered.length === 0) return 100;
+  const upCount = filtered.filter((hb) => hb.status === "UP").length;
+  return Number(((upCount / filtered.length) * 100).toFixed(2));
 }
 
 export function getGlobalStats(): GlobalStats {
-  const db = getDb();
+  const db = loadDb();
   const monitors = getAllMonitors();
-  
+
   const totalMonitors = monitors.length;
   const upCount = monitors.filter((m) => m.status === "UP").length;
   const downCount = monitors.filter((m) => m.status === "DOWN").length;
@@ -389,9 +338,8 @@ export function getGlobalStats(): GlobalStats {
   const latencies = monitors.filter((m) => m.lastLatency && m.status !== "PAUSED").map((m) => m.lastLatency!);
   const avgLatency = latencies.length > 0 ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : 0;
 
-  const openIncCount = (db.prepare(`SELECT COUNT(*) as c FROM incidents WHERE status = 'OPEN'`).get() as any)?.c || 0;
+  const openIncidentsCount = db.incidents.filter((inc) => inc.status === "OPEN").length;
 
-  // Calculate overall uptime
   let totalUptime = 0;
   for (const m of monitors) {
     totalUptime += calculateUptimePercentage(m.id, 24);
@@ -406,31 +354,6 @@ export function getGlobalStats(): GlobalStats {
     pausedCount,
     avgLatency,
     overallUptime,
-    openIncidentsCount: openIncCount,
-  };
-}
-
-function mapRowToMonitor(r: any): Monitor {
-  const uptime24 = calculateUptimePercentage(r.id, 24);
-  const uptime30 = calculateUptimePercentage(r.id, 720);
-
-  return {
-    id: r.id,
-    name: r.name,
-    url: r.url,
-    method: r.method,
-    interval: r.interval,
-    timeout: r.timeout,
-    expectedStatus: r.expected_status,
-    headers: r.headers,
-    body: r.body,
-    status: r.status,
-    lastChecked: r.last_checked,
-    lastLatency: r.last_latency,
-    uptime24h: uptime24,
-    uptime30d: uptime30,
-    alertEmail: r.alert_email,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
+    openIncidentsCount,
   };
 }
